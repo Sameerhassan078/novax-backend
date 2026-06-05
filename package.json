@@ -1,6 +1,7 @@
 {
   "name": "novax-backend",
   "version": "1.0.0",
+  "type": "commonjs"
   "description": "NovaX Exchange Backend",
   "main": "server.js",
   "scripts": {
