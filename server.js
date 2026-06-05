@@ -134,14 +134,30 @@ app.get("/api/price/:symbol", async (req, res) => {
     const symbol = req.params.symbol.toUpperCase();
 
     const response = await axios.get(
-      `https://api.bybit.com/v5/market/tickers?category=spot&symbol=${symbol}`
+      `https://api.bybit.com/v5/market/tickers`,
+      {
+        params: {
+          category: "spot",
+          symbol: symbol
+        },
+        headers: {
+          "User-Agent": "Mozilla/5.0",
+          "Accept": "application/json"
+        }
+      }
     );
 
     res.json(response.data);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({
+      error: e.response?.data || e.message
+    });
   }
 });
+
+const response = await axios.get(
+  `https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`
+);
 // =======================
 // ORDERBOOK (BINANCE)
 // =======================
