@@ -134,28 +134,20 @@ app.get("/api/price/:symbol", async (req, res) => {
     const symbol = req.params.symbol.toUpperCase();
 
     const response = await axios.get(
-      `https://api.bybit.com/v5/market/tickers`,
-      {
-        params: {
-          category: "spot",
-          symbol: symbol
-        },
-        headers: {
-          "User-Agent": "Mozilla/5.0",
-          "Accept": "application/json"
-        }
-      }
+      `https://data-api.binance.vision/api/v3/ticker/price?symbol=${symbol}`
     );
 
-    res.json(response.data);
+    res.json({
+      symbol: response.data.symbol,
+      price: response.data.price
+    });
+
   } catch (e) {
     res.status(500).json({
-      error: e.response?.data || e.message
+      error: e.message
     });
   }
 });
-
-
 // =======================
 // ORDERBOOK (BINANCE)
 // =======================
@@ -164,21 +156,28 @@ app.get("/api/orderbook/:symbol", async (req, res) => {
     const symbol = req.params.symbol.toUpperCase();
 
     const response = await axios.get(
-      `https://api.bybit.com/v5/market/orderbook?category=spot&symbol=${symbol}`
+      `https://data-api.binance.vision/api/v3/depth?symbol=${symbol}&limit=20`
     );
 
     const data = response.data;
 
     res.json({
-      bids: data.result?.b || [],
-      asks: data.result?.a || [],
+      bids: data.bids.map(b => ({
+        price: b[0],
+        qty: b[1]
+      })),
+      asks: data.asks.map(a => ({
+        price: a[0],
+        qty: a[1]
+      }))
     });
 
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({
+      error: e.message
+    });
   }
 });
-
 // =======================
 // START SERVER (IMPORTANT FOR RENDER)
 // =======================
