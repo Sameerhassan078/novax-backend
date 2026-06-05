@@ -155,9 +155,7 @@ app.get("/api/price/:symbol", async (req, res) => {
   }
 });
 
-const response = await axios.get(
-  `https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`
-);
+
 // =======================
 // ORDERBOOK (BINANCE)
 // =======================
@@ -168,6 +166,9 @@ app.get("/api/orderbook/:symbol", async (req, res) => {
     const response = await axios.get(
       `https://api.bybit.com/v5/market/orderbook?category=spot&symbol=${symbol}`
     );
+    const response = await axios.get(
+  `https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`
+);
 
     const data = response.data;
 
