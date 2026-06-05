@@ -18,6 +18,10 @@ if (!BYBIT_API_KEY || !BYBIT_SECRET) {
   console.log("❌ Missing API keys in .env");
 }
 
+app.get("/", (req, res) => {
+  res.send("Server is running 🚀");
+});
+
 // =======================
 // SIGNATURE FUNCTION
 // =======================
@@ -130,17 +134,14 @@ app.get("/api/price/:symbol", async (req, res) => {
     const symbol = req.params.symbol.toUpperCase();
 
     const response = await axios.get(
-      `https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`
+      `https://api.bybit.com/v5/market/tickers?category=spot&symbol=${symbol}`
     );
 
-    res.json({
-      price: response.data.price,
-    });
+    res.json(response.data);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
-
 // =======================
 // ORDERBOOK (BINANCE)
 // =======================
@@ -149,15 +150,16 @@ app.get("/api/orderbook/:symbol", async (req, res) => {
     const symbol = req.params.symbol.toUpperCase();
 
     const response = await axios.get(
-      `https://api.binance.com/api/v3/depth?symbol=${symbol}&limit=20`
+      `https://api.bybit.com/v5/market/orderbook?category=spot&symbol=${symbol}`
     );
 
     const data = response.data;
 
     res.json({
-      bids: data.bids,
-      asks: data.asks,
+      bids: data.result?.b || [],
+      asks: data.result?.a || [],
     });
+
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
