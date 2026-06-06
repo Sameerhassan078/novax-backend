@@ -31,37 +31,50 @@ const signBybit = (params) => {
 // ✅ Price from Binance (Public - No key needed)
 app.get("/api/price/:symbol", async (req, res) => {
   try {
-    const { symbol } = req.params;
-    const r = await axios.get(
-      `https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`
+    const symbol = req.params.symbol.toUpperCase();
+
+    const response = await axios.get(
+      `https://data-api.binance.vision/api/v3/ticker/price?symbol=${symbol}`
     );
+
     res.json({
-      success: true,
-      price: r.data.lastPrice,
-      high: r.data.highPrice,
-      low: r.data.lowPrice,
-      volume: r.data.volume,
-      change: r.data.priceChangePercent,
+      symbol: response.data.symbol,
+      price: response.data.price
     });
-  } catch(e) {
-    res.status(500).json({ success: false, error: e.message });
+
+  } catch (e) {
+    res.status(500).json({
+      error: e.message
+    });
   }
 });
 
 // ✅ Orderbook from Binance (Public - No key needed)
 app.get("/api/orderbook/:symbol", async (req, res) => {
   try {
-    const { symbol } = req.params;
-    const r = await axios.get(
-      `https://api.binance.com/api/v3/depth?symbol=${symbol}&limit=20`
+    const symbol = req.params.symbol.toUpperCase();
+
+    const response = await axios.get(
+      `https://data-api.binance.vision/api/v3/depth?symbol=${symbol}&limit=20`
     );
+
+    const data = response.data;
+
     res.json({
-      success: true,
-      asks: r.data.asks,
-      bids: r.data.bids,
+      bids: data.bids.map(b => ({
+        price: b[0],
+        qty: b[1]
+      })),
+      asks: data.asks.map(a => ({
+        price: a[0],
+        qty: a[1]
+      }))
     });
-  } catch(e) {
-    res.status(500).json({ success: false, error: e.message });
+
+  } catch (e) {
+    res.status(500).json({
+      error: e.message
+    });
   }
 });
 
