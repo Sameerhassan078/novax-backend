@@ -4,73 +4,95 @@ const crypto = require("crypto");
 const axios = require("axios");
 require("dotenv").config();
 
-const app = express(); // ✅ MUST BE FIRST
-
+const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ENV CHECK
-const BYBIT_API_KEY = process.env.BYBIT_API_KEY;
+const BYBIT_KEY = process.env.BYBIT_API_KEY;
 const BYBIT_SECRET = process.env.BYBIT_SECRET;
 const BYBIT_BASE = "https://api.bybit.com";
 
-if (!BYBIT_API_KEY || !BYBIT_SECRET) {
-  console.log("❌ Missing API keys in .env");
-}
-
-app.get("/", (req, res) => {
-  res.send("Server is running 🚀");
-});
-
-// =======================
-// SIGNATURE FUNCTION
-// =======================
-const generateSignature = (params) => {
+// ✅ Bybit Signature Generator
+const signBybit = (params) => {
   const timestamp = Date.now().toString();
   const recvWindow = "5000";
-
-  const queryString = Object.entries(params)
+  const sortedParams = Object.keys(params)
     .sort()
-    .map(([k, v]) => `${k}=${v}`)
+    .map(k => `${k}=${params[k]}`)
     .join("&");
-
-  const sigStr = timestamp + BYBIT_API_KEY + recvWindow + queryString;
-
+  const sigStr = `${timestamp}${BYBIT_KEY}${recvWindow}${sortedParams}`;
   const signature = crypto
     .createHmac("sha256", BYBIT_SECRET)
     .update(sigStr)
     .digest("hex");
-
   return { timestamp, recvWindow, signature };
 };
 
-// =======================
-// PLACE ORDER
-// =======================
+// ✅ Price from Binance (Public - No key needed)
+app.get("/api/price/:symbol", async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const r = await axios.get(
+      `https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol}`
+    );
+    res.json({
+      success: true,
+      price: r.data.lastPrice,
+      high: r.data.highPrice,
+      low: r.data.lowPrice,
+      volume: r.data.volume,
+      change: r.data.priceChangePercent,
+    });
+  } catch(e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ✅ Orderbook from Binance (Public - No key needed)
+app.get("/api/orderbook/:symbol", async (req, res) => {
+  try {
+    const { symbol } = req.params;
+    const r = await axios.get(
+      `https://api.binance.com/api/v3/depth?symbol=${symbol}&limit=20`
+    );
+    res.json({
+      success: true,
+      asks: r.data.asks,
+      bids: r.data.bids,
+    });
+  } catch(e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// ✅ Place Order on Bybit (Private - Needs API key)
 app.post("/api/order/place", async (req, res) => {
   try {
-    const { symbol, side, qty, orderType } = req.body;
+    const { symbol, side, qty } = req.body;
 
-    if (!symbol || !side || !qty) {
-      return res.status(400).json({ error: "Missing fields" });
+    if (!BYBIT_KEY || !BYBIT_SECRET) {
+      return res.status(400).json({
+        success: false,
+        error: "Bybit API keys not configured!"
+      });
     }
 
     const params = {
       category: "spot",
-      symbol,
-      side,
-      orderType: orderType || "Market",
+      symbol: symbol,
+      side: side, // "Buy" or "Sell"
+      orderType: "Market",
       qty: qty.toString(),
     };
 
-    const { timestamp, recvWindow, signature } = generateSignature(params);
+    const { timestamp, recvWindow, signature } = signBybit(params);
 
     const response = await axios.post(
       `${BYBIT_BASE}/v5/order/create`,
       params,
       {
         headers: {
-          "X-BAPI-API-KEY": BYBIT_API_KEY,
+          "X-BAPI-API-KEY": BYBIT_KEY,
           "X-BAPI-TIMESTAMP": timestamp,
           "X-BAPI-RECV-WINDOW": recvWindow,
           "X-BAPI-SIGN": signature,
@@ -79,39 +101,79 @@ app.post("/api/order/place", async (req, res) => {
       }
     );
 
-    res.json(response.data);
-  } catch (e) {
-    console.error(e.response?.data || e.message);
-    res.status(500).json({ error: e.message });
+    if (response.data.retCode === 0) {
+      const orderId = response.data.result.orderId;
+
+      // Wait 1.5 sec for order to fill
+      await new Promise(r => setTimeout(r, 1500));
+
+      // Check fill status
+      const fillParams = {
+        category: "spot",
+        symbol,
+        orderId,
+      };
+      const { timestamp: t2, recvWindow: rw2, signature: s2 } = signBybit(fillParams);
+
+      const fillRes = await axios.get(
+        `${BYBIT_BASE}/v5/order/history`,
+        {
+          params: fillParams,
+          headers: {
+            "X-BAPI-API-KEY": BYBIT_KEY,
+            "X-BAPI-TIMESTAMP": t2,
+            "X-BAPI-RECV-WINDOW": rw2,
+            "X-BAPI-SIGN": s2,
+          },
+        }
+      );
+
+      const orderInfo = fillRes.data?.result?.list?.[0];
+
+      res.json({
+        success: true,
+        orderId,
+        status: orderInfo?.orderStatus || "Filled",
+        fillPrice: orderInfo?.avgPrice || orderInfo?.price,
+        fillQty: orderInfo?.cumExecQty || qty,
+        fee: orderInfo?.cumExecFee || "0",
+        exchange: "Bybit",
+        rawResponse: response.data,
+      });
+    } else {
+      res.json({
+        success: false,
+        error: response.data.retMsg,
+        code: response.data.retCode,
+      });
+    }
+  } catch(e) {
+    res.status(500).json({
+      success: false,
+      error: e.message
+    });
   }
 });
 
-// =======================
-// ORDER STATUS
-// =======================
-app.get("/api/order/status/:orderId", async (req, res) => {
+// ✅ Check Order Status
+app.get("/api/order/:orderId", async (req, res) => {
   try {
     const { orderId } = req.params;
     const { symbol } = req.query;
-
-    if (!symbol) {
-      return res.status(400).json({ error: "symbol is required" });
-    }
 
     const params = {
       category: "spot",
       symbol,
       orderId,
     };
+    const { timestamp, recvWindow, signature } = signBybit(params);
 
-    const { timestamp, recvWindow, signature } = generateSignature(params);
-
-    const response = await axios.get(
-      `${BYBIT_BASE}/v5/order/realtime`,
+    const r = await axios.get(
+      `${BYBIT_BASE}/v5/order/history`,
       {
         params,
         headers: {
-          "X-BAPI-API-KEY": BYBIT_API_KEY,
+          "X-BAPI-API-KEY": BYBIT_KEY,
           "X-BAPI-TIMESTAMP": timestamp,
           "X-BAPI-RECV-WINDOW": recvWindow,
           "X-BAPI-SIGN": signature,
@@ -119,70 +181,31 @@ app.get("/api/order/status/:orderId", async (req, res) => {
       }
     );
 
-    res.json(response.data);
-  } catch (e) {
-    console.error(e.response?.data || e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// =======================
-// PRICE (BINANCE)
-// =======================
-app.get("/api/price/:symbol", async (req, res) => {
-  try {
-    const symbol = req.params.symbol.toUpperCase();
-
-    const response = await axios.get(
-      `https://data-api.binance.vision/api/v3/ticker/price?symbol=${symbol}`
-    );
-
+    const order = r.data?.result?.list?.[0];
     res.json({
-      symbol: response.data.symbol,
-      price: response.data.price
+      success: true,
+      orderId,
+      status: order?.orderStatus,
+      fillPrice: order?.avgPrice,
+      fillQty: order?.cumExecQty,
+      fee: order?.cumExecFee,
     });
-
-  } catch (e) {
-    res.status(500).json({
-      error: e.message
-    });
+  } catch(e) {
+    res.status(500).json({ success: false, error: e.message });
   }
 });
-// =======================
-// ORDERBOOK (BINANCE)
-// =======================
-app.get("/api/orderbook/:symbol", async (req, res) => {
-  try {
-    const symbol = req.params.symbol.toUpperCase();
 
-    const response = await axios.get(
-      `https://data-api.binance.vision/api/v3/depth?symbol=${symbol}&limit=20`
-    );
-
-    const data = response.data;
-
-    res.json({
-      bids: data.bids.map(b => ({
-        price: b[0],
-        qty: b[1]
-      })),
-      asks: data.asks.map(a => ({
-        price: a[0],
-        qty: a[1]
-      }))
-    });
-
-  } catch (e) {
-    res.status(500).json({
-      error: e.message
-    });
-  }
+// ✅ Health Check
+app.get("/", (req, res) => {
+  res.json({
+    status: "NovaX Backend Running ✅",
+    binance: "Connected (Public API)",
+    bybit: BYBIT_KEY ? "Connected (Private API)" : "⚠️ API Key Missing",
+  });
 });
-// =======================
-// START SERVER (IMPORTANT FOR RENDER)
-// =======================
-const PORT = process.env.PORT || 3000;
 
+const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`✅ NovaX Backend running on port ${PORT}`);
+  console.log(`Bybit API: ${BYBIT_KEY ? "Configured ✅" : "Missing ⚠️"}`);
 });
